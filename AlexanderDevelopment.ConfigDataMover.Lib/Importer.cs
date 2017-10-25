@@ -62,7 +62,7 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
 
         List<GuidMapping> _mappings = new List<GuidMapping>();
 
-        private enum operationTypes { Create, Update };
+        private enum operationTypes { Create, Update, Associate };
         
         /// <summary>
         /// log4net logger
@@ -616,7 +616,7 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
         public void Process()
         {
             OrganizationServiceProxy sourceService = null;
-            OrganizationServiceProxy targetService = null;
+            OrganizationServiceProxy targetService = null;           
 
             //set up logging
             logger = LogManager.GetLogger(typeof(Importer));
@@ -649,7 +649,7 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
                 var item = JobSteps[i];
                 JobStep step = (JobStep)item;
                 LogMessage("INFO", string.Format("starting step {0}", step.StepName));
-
+                
                 //create a list of entities to hold retrieved entities so we can page through results
                 List<Entity> ec = new List<Entity>();
 
@@ -715,203 +715,214 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
                         //set variable to hold operation type - create or update
                         operationTypes importoperation = new operationTypes();
 
-                        //loop through each entity in the collection
-                        foreach (Entity entity in ec)
+                        //disable related plugins for step if desired.
+                        List<ProxyClasses.sdkmessageprocessingstep> disabledSdkMessageSteps = null;
+                        if (item.DisablePlugins)
                         {
-                            //set a flag for whether we should execute specialized operations post-create/update
-                            bool executeSpecializedOperations = true;
-
-                            //get statecode and statuscode values for later
-                            int statecode = -1;
-                            int statuscode = -1;
-
-                            if (entity.Attributes.Contains("statecode"))
-                                statecode = ((OptionSetValue)entity["statecode"]).Value;
-
-                            if(entity.Attributes.Contains("statuscode"))
-                                statuscode = ((OptionSetValue)entity["statuscode"]).Value;
-
-                            //create a list to hold the replacement guids. a second pass is required because c# disallows modifying a collection while enumerating
-                            List<KeyValuePair<string, object>> guidsToUpdate = new List<KeyValuePair<string, object>>();
-                            LogMessage("INFO", string.Format("  processing record {0}, {1}", entity.Id, entity.LogicalName));
                             try
                             {
-                                LogMessage("INFO", "    processing GUID replacements");
-                                foreach (KeyValuePair<string, object> attribute in entity.Attributes)
+                                LogMessage("INFO", string.Format("Disabling SDK Message steps for entity {0}", ec[0].LogicalName));
+                                disabledSdkMessageSteps = PluginSDKStepManager.GetEnableSdkMessageSteps(ec[0].LogicalName, _targetClient.OrganizationServiceProxy, logger);
+                                if (disabledSdkMessageSteps.Count > 0)
                                 {
-                                    //LogMessage("INFO",string.Format("Attribute - {0} {1}", attribute.Key, attribute.Value.GetType().ToString()));
-                                    if (attribute.Value is Microsoft.Xrm.Sdk.EntityReference)
-                                    {
-                                        //LogMessage("INFO","getting source");
-
-                                        EntityReference source = ((EntityReference)attribute.Value);
-                                        try
-                                        {
-                                            //LogMessage("INFO","looking for GUID replacement");
-                                            Guid sourceId = source.Id;
-                                            Guid targetId = _mappings.Find(t => t.sourceId == source.Id).targetId;
-                                            source.Id = targetId;
-                                            guidsToUpdate.Add(new KeyValuePair<string, object>(attribute.Key, source));
-                                            //LogMessage("INFO",string.Format("replacement found - {0} -> {1}", sourceId, targetId));
-                                        }
-                                        catch (System.NullReferenceException ex)
-                                        {
-                                            //LogMessage("INFO", "NullReferenceException happened");
-                                            //do nothing because nullreferenceexception means there's no guid mapping to use
-                                        }
-                                    }
-                                }
-
-                                //now actually update the GUIDs with the mapped values
-                                foreach (KeyValuePair<string, object> attribute in guidsToUpdate)
-                                {
-                                    //LogMessage("INFO",string.Format("    replacing attribute GUID {0} {1}", attribute.Key, attribute.Value));
-                                    entity[attribute.Key] = attribute.Value;
-                                }
-
-                                //if create-only step
-                                if (step.CreateOnly)
-                                {
-                                    //remove statecode and statuscode if they are still included in entity attribute collection
-                                    if (entity.Attributes.Contains("statecode"))
-                                        entity.Attributes.Remove("statecode");
-
-                                    if (entity.Attributes.Contains("statuscode"))
-                                        entity.Attributes.Remove("statuscode");
-
-                                    importoperation = operationTypes.Create;
-                                    LogMessage("INFO", "    trying target create only");
-                                    targetService.Create(entity);
-                                    LogMessage("INFO", "    create ok");
-
+                                    PluginSDKStepManager.DisableSdkMessageSteps(disabledSdkMessageSteps, _targetClient.OrganizationServiceProxy, logger);
+                                    LogMessage("INFO", string.Format("Disabled {0} SDK Message Steps.", disabledSdkMessageSteps.Count));
                                 }
                                 else
                                 {
-                                    //try to update first
-                                    try
+                                    LogMessage("INFO", "No SDK Message Steps related to entity.");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                LogMessage("ERROR", string.Format("Error while disabling SDK Message Steps: {0}", ex.Message));
+                                _errorCount++;
+                            }
+                        }
+
+                        if (step.NtoNIntersectTable)
+                        {
+                            LogMessage("INFO", "Processing Intersect Table.");
+                            try
+                            {
+                                NtoNRecordManager.CreateRelationships(ec, _targetClient.OrganizationServiceProxy, logger);
+                            }
+                            catch(Exception ex)
+                            {
+                                LogMessage("ERROR", string.Format("Error while associating records: {0}", ex.Message));
+                                _errorCount++;
+                            }
+                        }
+                        else
+                        {
+                            //loop through each entity in the collection
+                            foreach (Entity entity in ec)
+                            {
+                                //set a flag for whether we should execute specialized operations post-create/update
+                                bool executeSpecializedOperations = true;
+
+                                //get statecode and statuscode values for later
+                                int statecode = -1;
+                                int statuscode = -1;
+
+                                if (entity.Attributes.Contains("statecode"))
+                                    statecode = ((OptionSetValue)entity["statecode"]).Value;
+
+                                if (entity.Attributes.Contains("statuscode"))
+                                    statuscode = ((OptionSetValue)entity["statuscode"]).Value;
+
+                                //create a list to hold the replacement guids. a second pass is required because c# disallows modifying a collection while enumerating
+                                List<KeyValuePair<string, object>> guidsToUpdate = new List<KeyValuePair<string, object>>();
+                                LogMessage("INFO", string.Format("  processing record {0}, {1}", entity.Id, entity.LogicalName));
+                                try
+                                {
+                                    LogMessage("INFO", "    processing GUID replacements");
+                                    foreach (KeyValuePair<string, object> attribute in entity.Attributes)
                                     {
-                                        //if version is below 7.1 then remove statecode and statuscode attributes from entity attribute collection
-                                        //if version is 7.1 or later, setting statecode and statuscode in an update will work fine
-                                        if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
+                                        //LogMessage("INFO",string.Format("Attribute - {0} {1}", attribute.Key, attribute.Value.GetType().ToString()));
+                                        if (attribute.Value is Microsoft.Xrm.Sdk.EntityReference)
                                         {
-                                            LogMessage("INFO", "    removing statecode/statuscode");
-                                            if (entity.Attributes.Contains("statecode"))
-                                                entity.Attributes.Remove("statecode");
+                                            //LogMessage("INFO","getting source");
 
-                                            if (entity.Attributes.Contains("statuscode"))
-                                                entity.Attributes.Remove("statuscode");
-                                        }
-                                        importoperation = operationTypes.Update;
-                                        LogMessage("INFO", "    trying target update");
-                                        targetService.Update(entity);
-                                        LogMessage("INFO", "    update ok");
-                                    }
-                                    catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
-                                    {
-                                        //only try a create if it's not an updateonly step
-                                        if (!step.UpdateOnly)
-                                        {
-                                            //remove statecode and statuscode if they are still included in entity attribute collection
-                                            if (entity.Attributes.Contains("statecode"))
-                                                entity.Attributes.Remove("statecode");
-
-                                            if (entity.Attributes.Contains("statuscode"))
-                                                entity.Attributes.Remove("statuscode");
-
-                                            //only try the create step if the update failed because the record doesn't already exist to update
-                                            if (ex.Message.ToUpper().EndsWith("DOES NOT EXIST"))
+                                            EntityReference source = ((EntityReference)attribute.Value);
+                                            try
                                             {
-                                                importoperation = operationTypes.Create;
-                                                LogMessage("INFO", "    trying target create");
-                                                //if update fails and step is not update-only then try to create
-                                                targetService.Create(entity);
-                                                LogMessage("INFO", "    create ok");
+                                                //LogMessage("INFO","looking for GUID replacement");
+                                                Guid sourceId = source.Id;
+                                                Guid targetId = _mappings.Find(t => t.sourceId == source.Id).targetId;
+                                                source.Id = targetId;
+                                                guidsToUpdate.Add(new KeyValuePair<string, object>(attribute.Key, source));
+                                                //LogMessage("INFO",string.Format("replacement found - {0} -> {1}", sourceId, targetId));
                                             }
-                                            else //if the update failed for any reason other than "does not exist" we have a problem and don't want to try the create step
+                                            catch (System.NullReferenceException ex)
+                                            {
+                                                //LogMessage("INFO", "NullReferenceException happened");
+                                                //do nothing because nullreferenceexception means there's no guid mapping to use
+                                            }
+                                        }
+                                    }
+
+                                    //now actually update the GUIDs with the mapped values
+                                    foreach (KeyValuePair<string, object> attribute in guidsToUpdate)
+                                    {
+                                        //LogMessage("INFO",string.Format("    replacing attribute GUID {0} {1}", attribute.Key, attribute.Value));
+                                        entity[attribute.Key] = attribute.Value;
+                                    }
+
+                                    //if create-only step
+                                    if (step.CreateOnly)
+                                    {
+                                        //remove statecode and statuscode if they are still included in entity attribute collection
+                                        if (entity.Attributes.Contains("statecode"))
+                                            entity.Attributes.Remove("statecode");
+
+                                        if (entity.Attributes.Contains("statuscode"))
+                                            entity.Attributes.Remove("statuscode");
+
+                                        importoperation = operationTypes.Create;
+                                        LogMessage("INFO", "    trying target create only");
+                                        targetService.Create(entity);
+                                        LogMessage("INFO", "    create ok");
+
+                                    }
+                                    else
+                                    {
+                                        //try to update first
+                                        try
+                                        {
+                                            //if version is below 7.1 then remove statecode and statuscode attributes from entity attribute collection
+                                            //if version is 7.1 or later, setting statecode and statuscode in an update will work fine
+                                            if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
+                                            {
+                                                LogMessage("INFO", "    removing statecode/statuscode");
+                                                if (entity.Attributes.Contains("statecode"))
+                                                    entity.Attributes.Remove("statecode");
+
+                                                if (entity.Attributes.Contains("statuscode"))
+                                                    entity.Attributes.Remove("statuscode");
+                                            }
+                                            importoperation = operationTypes.Update;
+                                            LogMessage("INFO", "    trying target update");
+                                            targetService.Update(entity);
+                                            LogMessage("INFO", "    update ok");
+                                        }
+                                        catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
+                                        {
+                                            //only try a create if it's not an updateonly step
+                                            if (!step.UpdateOnly)
+                                            {
+                                                //remove statecode and statuscode if they are still included in entity attribute collection
+                                                if (entity.Attributes.Contains("statecode"))
+                                                    entity.Attributes.Remove("statecode");
+
+                                                if (entity.Attributes.Contains("statuscode"))
+                                                    entity.Attributes.Remove("statuscode");
+
+                                                //only try the create step if the update failed because the record doesn't already exist to update
+                                                if (ex.Message.ToUpper().EndsWith("DOES NOT EXIST"))
+                                                {
+                                                    importoperation = operationTypes.Create;
+                                                    LogMessage("INFO", "    trying target create");
+                                                    //if update fails and step is not update-only then try to create
+                                                    targetService.Create(entity);
+                                                    LogMessage("INFO", "    create ok");
+                                                }
+                                                else //if the update failed for any reason other than "does not exist" we have a problem and don't want to try the create step
+                                                {
+                                                    //don't do the specialized operation steps (assign, setstate)
+                                                    executeSpecializedOperations = false;
+
+                                                    LogMessage("INFO", string.Format("    update failed: {0}", ex.Message));
+                                                    throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
+                                                }
+                                            }
+                                            else
                                             {
                                                 //don't do the specialized operation steps (assign, setstate)
                                                 executeSpecializedOperations = false;
 
-                                                LogMessage("INFO", string.Format("    update failed: {0}", ex.Message));
-                                                throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
-                                            }
-                                        }
-                                        else
-                                        {
-                                            //don't do the specialized operation steps (assign, setstate)
-                                            executeSpecializedOperations = false;
-
-                                            throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
-                                        }
-                                    }
-                                }
-
-                                //if initial create/update is successful, do specialized operations
-                                if (executeSpecializedOperations)
-                                {
-                                    //record ownership for updates (only crm versions below 7.1.x.x)
-                                    if (importoperation == operationTypes.Update)
-                                    {
-                                        //only do this if ownerid is in the collection
-                                        if (entity.Attributes.Contains("ownerid"))
-                                        {
-                                            //only do this if crm version is less than 7.1.x.x
-                                            if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
-                                            {
-                                                AssignRequest assign = new AssignRequest
-                                                {
-                                                    Assignee = (EntityReference)entity["ownerid"],
-                                                    Target = new EntityReference(entity.LogicalName, entity.Id)
-                                                };
-                                                try
-                                                {
-                                                    LogMessage("INFO", "    trying target assignment update");
-                                                    targetService.Execute(assign);
-                                                    LogMessage("INFO", "    assignment ok");
-                                                }
-                                                catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
-                                                {
-                                                    LogMessage("INFO", string.Format("    assignment failed: {0}", ex.Message));
-                                                    throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    //record statecode & statuscode for creates (all crm versions)
-                                    if (importoperation == operationTypes.Create && !step.UpdateOnly)
-                                    {
-                                        //only do this if we have both a statecode and statuscode specified
-                                        if (statecode != -1 && statuscode != -1)
-                                        {
-                                            SetStateRequest setstate = new SetStateRequest
-                                            {
-                                                State = new OptionSetValue(statecode),
-                                                Status = new OptionSetValue(statuscode),
-                                                EntityMoniker = new EntityReference(entity.LogicalName, entity.Id)
-                                            };
-                                            try
-                                            {
-                                                LogMessage("INFO", "    trying target statecode/statuscode update");
-                                                targetService.Execute(setstate);
-                                                LogMessage("INFO", "    set statecode/statuscode ok");
-                                            }
-                                            catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
-                                            {
-                                                LogMessage("INFO", string.Format("    set statecode/statuscode failed: {0}", ex.Message));
                                                 throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
                                             }
                                         }
                                     }
 
-                                    //record statecode & statuscode for updates (only crm versions below 7.1.x.x)
-                                    if (importoperation == operationTypes.Update)
+                                    //if initial create/update is successful, do specialized operations
+                                    if (executeSpecializedOperations)
                                     {
-                                        //only do this if we have both a statecode and statuscode specified
-                                        if (statecode != -1 && statuscode != -1)
+                                        //record ownership for updates (only crm versions below 7.1.x.x)
+                                        if (importoperation == operationTypes.Update)
                                         {
-                                            //only do this if crm version is less than 7.1.x.x
-                                            if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
+                                            //only do this if ownerid is in the collection
+                                            if (entity.Attributes.Contains("ownerid"))
+                                            {
+                                                //only do this if crm version is less than 7.1.x.x
+                                                if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
+                                                {
+                                                    AssignRequest assign = new AssignRequest
+                                                    {
+                                                        Assignee = (EntityReference)entity["ownerid"],
+                                                        Target = new EntityReference(entity.LogicalName, entity.Id)
+                                                    };
+                                                    try
+                                                    {
+                                                        LogMessage("INFO", "    trying target assignment update");
+                                                        targetService.Execute(assign);
+                                                        LogMessage("INFO", "    assignment ok");
+                                                    }
+                                                    catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
+                                                    {
+                                                        LogMessage("INFO", string.Format("    assignment failed: {0}", ex.Message));
+                                                        throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        //record statecode & statuscode for creates (all crm versions)
+                                        if (importoperation == operationTypes.Create && !step.UpdateOnly)
+                                        {
+                                            //only do this if we have both a statecode and statuscode specified
+                                            if (statecode != -1 && statuscode != -1)
                                             {
                                                 SetStateRequest setstate = new SetStateRequest
                                                 {
@@ -932,23 +943,68 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
                                                 }
                                             }
                                         }
+
+                                        //record statecode & statuscode for updates (only crm versions below 7.1.x.x)
+                                        if (importoperation == operationTypes.Update)
+                                        {
+                                            //only do this if we have both a statecode and statuscode specified
+                                            if (statecode != -1 && statuscode != -1)
+                                            {
+                                                //only do this if crm version is less than 7.1.x.x
+                                                if (majorversion < 7 || (majorversion == 7 && minorversion < 1))
+                                                {
+                                                    SetStateRequest setstate = new SetStateRequest
+                                                    {
+                                                        State = new OptionSetValue(statecode),
+                                                        Status = new OptionSetValue(statuscode),
+                                                        EntityMoniker = new EntityReference(entity.LogicalName, entity.Id)
+                                                    };
+                                                    try
+                                                    {
+                                                        LogMessage("INFO", "    trying target statecode/statuscode update");
+                                                        targetService.Execute(setstate);
+                                                        LogMessage("INFO", "    set statecode/statuscode ok");
+                                                    }
+                                                    catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
+                                                    {
+                                                        LogMessage("INFO", string.Format("    set statecode/statuscode failed: {0}", ex.Message));
+                                                        throw new FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault>(ex.Detail);
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
+                                catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
+                                {
+                                    string operation = (importoperation == operationTypes.Create) ? "CREATE" : "UPDATE";
+                                    //if everything fails, log error
+                                    //to main log
+                                    LogMessage("ERROR", string.Format("    record transfer failed"));
+
+                                    //to record error log
+                                    LogMessage("ERROR", string.Format("RECORD ERROR: {0}, {1}, OPERATION: {2}, MESSAGE: {3}", entity.Id, entity.LogicalName, operation, ex.Detail?.Message));
+
+                                    //increment the error count
+                                    _errorCount++;
+                                }
                             }
-                            catch (FaultException<Microsoft.Xrm.Sdk.OrganizationServiceFault> ex)
+                        }
+                        //re-enable plugin message steps that were disabled.
+                        if(item.DisablePlugins && disabledSdkMessageSteps != null && disabledSdkMessageSteps.Count > 0)
+                        {
+                            try
                             {
-                                string operation = (importoperation == operationTypes.Create) ? "CREATE" : "UPDATE";
-                                //if everything fails, log error
-                                //to main log
-                                LogMessage("ERROR", string.Format("    record transfer failed"));
-
-                                //to record error log
-                                LogMessage("ERROR", string.Format("RECORD ERROR: {0}, {1}, OPERATION: {2}, MESSAGE: {3}", entity.Id, entity.LogicalName, operation, ex.Detail?.Message));
-
-                                //increment the error count
+                                LogMessage("INFO", "Renabling SDK Message steps.");
+                                PluginSDKStepManager.EnableSdkMessageSteps(disabledSdkMessageSteps, _targetClient.OrganizationServiceProxy, logger);
+                            }
+                            catch(Exception ex)
+                            {
+                                LogMessage("ERROR", string.Format("Error while enabling SDK Message Steps: {0}", ex.Message));
                                 _errorCount++;
                             }
                         }
+
                     }
                 }
                 

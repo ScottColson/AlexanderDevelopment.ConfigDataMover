@@ -30,5 +30,7 @@ namespace AlexanderDevelopment.ConfigDataMover.Lib
         public string StepFetch { get; set; }
         public bool UpdateOnly { get; set; }
         public bool CreateOnly { get; set; }
+        public bool NtoNIntersectTable { get; set; }
+        public bool DisablePlugins { get; set; }
     }
 }

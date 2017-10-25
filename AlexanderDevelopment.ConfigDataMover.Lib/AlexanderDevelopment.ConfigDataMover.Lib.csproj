@@ -98,7 +98,12 @@
     <Compile Include="GuidMapping.cs" />
     <Compile Include="Importer.cs" />
     <Compile Include="JobStep.cs" />
+    <Compile Include="NtoNRecordManager.cs" />
+    <Compile Include="PluginManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ProxyClasses\BaseProxyClass.cs" />
+    <Compile Include="ProxyClasses\sdkmessagefilter.cs" />
+    <Compile Include="ProxyClasses\sdkmessageprocessingstep.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="AlexanderDevelopment.ConfigDataMover.Lib.licenseheader" />
@@ -109,6 +114,7 @@
     </EmbeddedResource>
     <None Include="packages.config" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

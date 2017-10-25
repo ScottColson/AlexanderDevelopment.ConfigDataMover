@@ -94,6 +94,13 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
                         if (xn.Attributes["createOnly"] != null)
                             step.CreateOnly = Convert.ToBoolean(xn.Attributes["createOnly"].Value);
 
+                        step.NtoNIntersectTable = false;
+                        if (xn.Attributes["isIntersectTable"] != null)
+                            step.NtoNIntersectTable = Convert.ToBoolean(xn.Attributes["isIntersectTable"].Value);
+
+                        if (xn.Attributes["disablePlugins"] != null)
+                            step.DisablePlugins = Convert.ToBoolean(xn.Attributes["disablePlugins"].Value);
+                        
                         stepListBox.Items.Add(step);
                     }
 
@@ -129,6 +136,7 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
             }
 
         }
+        
 
         /// <summary>
         /// saves the job from a file
@@ -167,26 +175,37 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
                     JobStep step = (JobStep)item;
                     XmlElement elStep = doc.CreateElement("Step");
                     elStep.AppendChild(doc.CreateElement("Name")).InnerText = step.StepName;
-                    switch ((string)stepTypeComboBox.SelectedValue)
+                    elStep.SetAttribute("disablePlugins", step.DisablePlugins.ToString());
+                    elStep.SetAttribute("isIntersectTable", step.NtoNIntersectTable.ToString());
+                    if (step.NtoNIntersectTable)
                     {
-                        case "Create only":
-                            elStep.SetAttribute("updateOnly", false.ToString());
-                            elStep.SetAttribute("createOnly", true.ToString());
-                            //step.UpdateOnly = false;
-                            //step.CreateOnly = true;
-                            break;
-                        case "Update only":
-                            elStep.SetAttribute("updateOnly", true.ToString());
-                            elStep.SetAttribute("createOnly", false.ToString());
-                            //step.UpdateOnly = true;
-                            //step.CreateOnly = false;
-                            break;
-                        default:
-                            elStep.SetAttribute("updateOnly", false.ToString());
-                            elStep.SetAttribute("createOnly", false.ToString());
-                            //step.UpdateOnly = false;
-                            //step.CreateOnly = false;
-                            break;
+                        elStep.SetAttribute("updateOnly", false.ToString());
+                        elStep.SetAttribute("createOnly", false.ToString());
+                    }
+                    else
+                    {
+                        switch ((string)stepTypeComboBox.SelectedValue)
+                        {
+                            case "Create only":
+                                elStep.SetAttribute("updateOnly", false.ToString());
+                                elStep.SetAttribute("createOnly", true.ToString());                               
+                                //step.UpdateOnly = false;
+                                //step.CreateOnly = true;
+                                break;
+                            case "Update only":
+                                elStep.SetAttribute("updateOnly", true.ToString());
+                                elStep.SetAttribute("createOnly", false.ToString());                                
+                                //step.UpdateOnly = true;
+                                //step.CreateOnly = false;
+                                break;
+
+                            default:
+                                elStep.SetAttribute("updateOnly", false.ToString());
+                                elStep.SetAttribute("createOnly", false.ToString());                                
+                                //step.UpdateOnly = false;
+                                //step.CreateOnly = false;
+                                break;
+                        }
                     }
                     
                     elStep.AppendChild(doc.CreateElement("Fetch")).InnerText = step.StepFetch;
@@ -428,16 +447,25 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
                 JobStep step = (JobStep)stepListBox.SelectedItem;
                 stepNameTextBox.Text = step.StepName;
                 stepFetchTextBox.Text = step.StepFetch;
+                stepDisablePlugins.IsChecked = step.DisablePlugins;
+
+                stepTypeComboBox.IsEnabled = true;
                 stepTypeComboBox.SelectedValue = "Create and update";
-                if (step.UpdateOnly)
+
+                if (step.NtoNIntersectTable)
+                {
+                    stepTypeComboBox.SelectedValue = "Intersect Table";
+
+                }
+                else if (step.UpdateOnly)
                 {
                     stepTypeComboBox.SelectedValue = "Update only";
                 }
-                if (step.CreateOnly)
+
+                else if (step.CreateOnly)
                 {
                     stepTypeComboBox.SelectedValue = "Create only";
                 }
-                //updateOnlyCheckBox.IsChecked = step.UpdateOnly;
             }
             else
             {
@@ -550,16 +578,25 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
                         case "Create only":
                             step.UpdateOnly = false;
                             step.CreateOnly = true;
+                            step.NtoNIntersectTable = false;
                             break;
                         case "Update only":
                             step.UpdateOnly = true;
                             step.CreateOnly = false;
+                            step.NtoNIntersectTable = false;
+                            break;
+                        case "Intersect Table":
+                            step.UpdateOnly = false;
+                            step.CreateOnly = false;
+                            step.NtoNIntersectTable = true;
                             break;
                         default:
                             step.UpdateOnly = false;
                             step.CreateOnly = false;
+                            step.NtoNIntersectTable = false;
                             break;
                     }
+                    step.DisablePlugins = stepDisablePlugins.IsChecked.HasValue && stepDisablePlugins.IsChecked.Value;
                     stepListBox.Items[stepListBox.SelectedIndex] = stepListBox.SelectedItem;
                     stepListBox.Items.Refresh();
                     stepListBox.SelectedIndex = selectedindex;
@@ -701,6 +738,8 @@ namespace AlexanderDevelopment.ConfigDataMover.Wpf
             SetConnection setconnection = new SetConnection(_target, false);
             setconnection.ShowDialog();
         }
+
+       
     }
 
     public static class Utility

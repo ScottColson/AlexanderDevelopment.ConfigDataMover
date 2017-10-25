@@ -124,13 +124,21 @@ namespace AlexanderDevelopment.ConfigDataMover.Cli
                     JobStep step = new JobStep();
                     step.StepName = xn.SelectSingleNode("Name").InnerText;
                     step.StepFetch = xn.SelectSingleNode("Fetch").InnerText;
+
                     step.UpdateOnly = false;
-                    if(xn.Attributes["updateOnly"]!=null)
+                    if (xn.Attributes["updateOnly"] != null)
                         step.UpdateOnly = Convert.ToBoolean(xn.Attributes["updateOnly"].Value);
 
                     step.CreateOnly = false;
                     if (xn.Attributes["createOnly"] != null)
                         step.CreateOnly = Convert.ToBoolean(xn.Attributes["createOnly"].Value);
+
+                    step.NtoNIntersectTable = false;
+                    if (xn.Attributes["isIntersectTable"] != null)
+                        step.NtoNIntersectTable = Convert.ToBoolean(xn.Attributes["isIntersectTable"].Value);
+
+                    if (xn.Attributes["disablePlugins"] != null)
+                        step.DisablePlugins = Convert.ToBoolean(xn.Attributes["disablePlugins"].Value);                                       
 
                     _jobSteps.Add(step);
                 }
